@@ -36,6 +36,7 @@ from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import pandas as pd
 # import nidaqmx
 
 # -*- coding: utf-8 -*-
@@ -84,7 +85,7 @@ Q = 1.6021e-19
 hc = 1239.8
 
 # Spectralon thickness in mm
-spectralonThickness = 11.8
+spectralonThickness = 12.8
 # Maximum downward position in mm
 positionMax = 25
 # Number of positions to optimize for
@@ -288,21 +289,45 @@ class Plotter:
     else:
         self.signal_max = self.task.get_r()
         
-  def measure_map(self):   
+  def measure_map(self):
+    global interpolation_function
+    id_num = 0
+    ID = 0
     time_constant = self.task.get_time_constant()
     self.motorx.openDevice()
     self.motory.openDevice()
     for i in range(len(self.xvalues)):
+        ere_data_df = np.zeros(len(self.yvalues))
         self.motorx.moveToPosition_mm(self.xvalues[i])
         for j in range(len(self.yvalues)):
             self.motory.moveToPosition_mm(self.yvalues[j])
             time.sleep(5*time_constant)
             self.signal_map[i,j] = self.task.get_r()
+            ere_data_df[j] = self.signal_map[i,j]
             if(self.signal_map[i,j] > self.task.get_sensitivity()*1e-6):
                 self.task.quick_range()
+            id_num = id_num+1
+        a = pd.DataFrame({"ERE":ere_data_df,"X":self.xvalues[i],"Y":self.yvalues},index=np.array(range(len(self.yvalues)))+ID)
+        ID = id_num
+        if (i==0):
+            b = a
+        else:
+            frames = [b,a]
+            b = pd.concat(frames)
         self.yvalues = np.flip(self.yvalues)
     self.motorx.closeDevice()
     self.motory.closeDevice()
+    b["ERE"] = (b["ERE"])/(self.get_sample_optics_factor(self.ents))
+    b["ERE"] = interpolation_function(b["ERE"])
+    output = b.pivot(index='Y',columns='X',values='ERE')
+    output.to_csv(self.ents[SAMPLE_NAME_FIELD].get()+"ERE_Map.csv")
+    self.axs[EREMAP].clear()
+    self.axs[EREMAP].set_title("ERE Map")
+    self.g1 = sns.heatmap(output,cmap="YlGnBu",ax=self.axs[EREMAP],cbar_ax=self.axs[COLORBAR],cbar_kws={'label': 'ERE (%)'})
+    self.axs[EREMAP].invert_xaxis()
+    self.g1.set_ylabel('Y (mm)')
+    self.g1.set_xlabel('X (mm)')
+    self.fig.savefig(self.ents[SAMPLE_NAME_FIELD].get())
     return self.signal_map
     
 # Function for taking in a signal and storing it in the 2% field
@@ -381,23 +406,23 @@ class Plotter:
     #     sample_optics_factor = sample_optics_factor*np.power(interpolated_arrays[optic+1][np.argmin(np.absolute(wavelengths-wavelength_sample))],mult)
     # sample_optics_factor = (sample_optics_factor*interpolated_arrays[RESPONSE][np.argmin(np.absolute(wavelengths-wavelength_sample))]*(bandgap*Q))
     # sample_optics_factor = sample_optics_factor[0]
-    photon_map = (self.signal_map)/(self.get_sample_optics_factor(self.ents))
-    ere_map = interpolation_function(photon_map)
-    if (len(ere_map[:,0])%2):
-        ere_map[1::2,:] = np.flip(ere_map[(len(ere_map[:,0])-2)::-2,:])
-    else:
-        ere_map[1::2,:] = np.flip(ere_map[(len(ere_map[:,0]))::-2,:])
-    output_map = np.zeros([len(self.xvalues)+1,len(self.yvalues)+1])
-    output_map[0,1:]=self.yvalues
-    output_map[1:,0]=self.xvalues
-    output_map[1:,1:] = ere_map
-    np.savetxt(self.ents[SAMPLE_NAME_FIELD].get()+"ERE_Map.csv",output_map,fmt='%s',delimiter=',',comments="")
-    self.axs[EREMAP].clear()
-    self.axs[EREMAP].set_title("ERE Map")
-    self.g1 = sns.heatmap(np.transpose(ere_map),cmap="YlGnBu",ax=self.axs[EREMAP],cbar_ax=self.axs[COLORBAR],cbar_kws={'label': 'ERE (%)'})
-    self.g1.set_ylabel('Y (mm)')
-    self.g1.set_xlabel('X (mm)')
-    self.fig.savefig(self.ents[SAMPLE_NAME_FIELD].get())
+    # photon_map = (self.signal_map)/(self.get_sample_optics_factor(self.ents))
+    # ere_map = interpolation_function(photon_map)
+    # if (len(ere_map[:,0])%2):
+    #     ere_map[1::2,:] = np.flip(ere_map[(len(ere_map[:,0])-2)::-2,:])
+    # else:
+    #     ere_map[1::2,:] = np.flip(ere_map[(len(ere_map[:,0]))::-2,:])
+    # output_map = np.zeros([len(self.xvalues)+1,len(self.yvalues)+1])
+    # output_map[0,1:]=self.yvalues
+    # output_map[1:,0]=self.xvalues
+    # output_map[1:,1:] = ere_map
+    # np.savetxt(self.ents[SAMPLE_NAME_FIELD].get()+"ERE_Map.csv",output_map,fmt='%s',delimiter=',',comments="")
+    # self.axs[EREMAP].clear()
+    # self.axs[EREMAP].set_title("ERE Map")
+    # self.g1 = sns.heatmap(np.transpose(ere_map),cmap="YlGnBu",ax=self.axs[EREMAP],cbar_ax=self.axs[COLORBAR],cbar_kws={'label': 'ERE (%)'})
+    # self.g1.set_ylabel('Y (mm)')
+    # self.g1.set_xlabel('X (mm)')
+    # self.fig.savefig(self.ents[SAMPLE_NAME_FIELD].get())
     
     
 # Takes an 100 point SunsERE dataset. Requires 2%, 99%, samplename and bandgap data.
@@ -495,9 +520,9 @@ class Plotter:
       led.setLedOnOff(False)
 
   def setup(self, channels):
-    self.x_points = 15 # Number of x points in map
-    self.y_points = 15 # Number of y points in map
-    self.laser_size = 1  # Size of laser spot
+    self.x_points = 4 # Number of x points in map
+    self.y_points = 4 # Number of y points in map
+    self.laser_size = 2  # Size of laser spot
     self.xvalues = self.laser_size * np.array(range(self.x_points))
     self.yvalues = self.laser_size * np.array(range(self.y_points))
     self.signal_map = np.zeros((self.x_points,self.y_points))
